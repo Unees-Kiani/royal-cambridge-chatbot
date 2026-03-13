@@ -1,0 +1,198 @@
+import streamlit as st
+from PIL import Image
+import sqlite3
+from datetime import datetime
+import openai
+
+# ===== OPENAI CONFIG =====
+openai.api_key = "YOUR_OPENAI_API_KEY"  # Replace with your OpenAI API key
+
+# ===== DATABASE SETUP =====
+conn = sqlite3.connect("school_chatbot.db")
+c = conn.cursor()
+
+# Users table
+c.execute("""CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT, role TEXT, email TEXT, password TEXT, child_id INTEGER)""")
+
+# Homework table
+c.execute("""CREATE TABLE IF NOT EXISTS homework (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT, description TEXT, class TEXT, due_date TEXT)""")
+
+# Exams table
+c.execute("""CREATE TABLE IF NOT EXISTS exams (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject TEXT, date TEXT, class TEXT)""")
+
+# Attendance table
+c.execute("""CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER, date TEXT, status TEXT)""")
+
+# Grades table
+c.execute("""CREATE TABLE IF NOT EXISTS grades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER, subject TEXT, marks INTEGER, term TEXT)""")
+
+# Queries table
+c.execute("""CREATE TABLE IF NOT EXISTS queries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER, question TEXT, answer TEXT, date TEXT)""")
+
+conn.commit()
+
+# ===== PAGE CONFIG AND STYLING =====
+logo = Image.open("logo.png")
+background_image = "background.jpg"
+
+st.set_page_config(
+    page_title="Royal Cambridge School Chatbot",
+    page_icon=logo,
+    layout="centered"
+)
+
+st.markdown(
+    f"""
+    <style>
+    .stApp {{
+        background-image: url("{background_image}");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+    }}
+    .header-logo {{
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+    }}
+    .header-logo img {{
+        width: 150px;
+        height: auto;
+        border-radius: 10px;
+    }}
+    .chat-box {{
+        background: rgba(255, 255, 255, 0.85);
+        padding: 20px;
+        border-radius: 15px;
+    }}
+    </style>
+    <div class="header-logo">
+        <img src="logo.png" alt="Royal Cambridge School Monogram">
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# ===== MAIN CHATBOX =====
+st.markdown('<div class="chat-box">', unsafe_allow_html=True)
+
+menu = ["Login", "Sign Up"]
+choice = st.sidebar.selectbox("Menu", menu)
+
+# SIGN UP FUNCTION
+def signup():
+    st.subheader("Create a New Account")
+    name = st.text_input("Name")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+    role = st.selectbox("Role", ["Student", "Parent", "Teacher"])
+    child_id = st.number_input("Child ID (if Parent)", min_value=0, value=0)
+    if st.button("Sign Up"):
+        c.execute("INSERT INTO users (name, role, email, password, child_id) VALUES (?,?,?,?,?)",
+                  (name, role, email, password, child_id if role=="Parent" else None))
+        conn.commit()
+        st.success("Account created! Please login.")
+
+# LOGIN FUNCTION
+def login():
+    st.subheader("Login")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        c.execute("SELECT * FROM users WHERE email=? AND password=?", (email, password))
+        user = c.fetchone()
+        if user:
+            st.success(f"Welcome {user[1]} ({user[2]})")
+            st.session_state['user'] = user
+        else:
+            st.error("Invalid credentials!")
+
+# MENU CHOICE
+if choice == "Sign Up":
+    signup()
+else:
+    login()
+
+# AFTER LOGIN
+if 'user' in st.session_state:
+    user = st.session_state['user']
+    role = user[2]
+    st.subheader(f"Hello {user[1]}! What would you like to do?")
+
+    if role == "Student":
+        option = st.selectbox("Options", ["View Homework", "Check Exams", "Ask Question"])
+        if option == "View Homework":
+            c.execute("SELECT title, description, due_date FROM homework")
+            hw = c.fetchall()
+            for h in hw:
+                st.write(f"**{h[0]}** - {h[1]} (Due: {h[2]})")
+        elif option == "Check Exams":
+            c.execute("SELECT subject, date FROM exams")
+            exams = c.fetchall()
+            for e in exams:
+                st.write(f"**{e[0]}** - {e[1]}")
+        else:
+            question = st.text_input("Ask your question")
+            if st.button("Send Question"):
+                response = openai.Completion.create(
+                    model="text-davinci-003",
+                    prompt=question,
+                    max_tokens=100
+                )
+                answer = response['choices'][0]['text'].strip()
+                c.execute("INSERT INTO queries (user_id, question, answer, date) VALUES (?,?,?,?)",
+                          (user[0], question, answer, datetime.now().strftime("%Y-%m-%d")))
+                conn.commit()
+                st.write(f"**Answer:** {answer}")
+
+    elif role == "Parent":
+        option = st.selectbox("Options", ["View Child Attendance", "View Grades"])
+        if option == "View Child Attendance":
+            c.execute("SELECT date, status FROM attendance WHERE student_id=?", (user[5],))
+            records = c.fetchall()
+            for r in records:
+                st.write(f"{r[0]} - {r[1]}")
+        elif option == "View Grades":
+            c.execute("SELECT subject, marks, term FROM grades WHERE student_id=?", (user[5],))
+            grades = c.fetchall()
+            for g in grades:
+                st.write(f"{g[0]} - {g[1]} ({g[2]})")
+
+    elif role == "Teacher":
+        option = st.selectbox("Options", ["Post Homework", "Update Grades", "Answer Queries"])
+        if option == "Post Homework":
+            title = st.text_input("Homework Title")
+            desc = st.text_area("Description")
+            due = st.date_input("Due Date")
+            if st.button("Post Homework"):
+                c.execute("INSERT INTO homework (title, description, class, due_date) VALUES (?,?,?,?)",
+                          (title, desc, "All", due.strftime("%Y-%m-%d")))
+                conn.commit()
+                st.success("Homework Posted!")
+        elif option == "Update Grades":
+            st.write("Grade updating coming soon!")
+        else:
+            c.execute("SELECT id, question FROM queries WHERE answer IS NULL")
+            queries = c.fetchall()
+            for q in queries:
+                ans = st.text_input(f"Answer for: {q[1]}")
+                if st.button(f"Submit {q[0]}"):
+                    c.execute("UPDATE queries SET answer=? WHERE id=?", (ans, q[0]))
+                    conn.commit()
+                    st.success("Answered!")
+
+st.markdown('</div>', unsafe_allow_html=True)
