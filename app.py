@@ -3,9 +3,14 @@ from PIL import Image
 import sqlite3
 from datetime import datetime
 import openai
+import os  # for secure OpenAI key
 
 # ===== OPENAI CONFIG =====
-openai.api_key = "YOUR_OPENAI_API_KEY"  # Replace with your OpenAI API key
+# Use Streamlit Secrets for security:
+# In Streamlit Cloud, add a secret:
+# Key: OPENAI_API_KEY
+# Value: your OpenAI API key
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # ===== DATABASE SETUP =====
 conn = sqlite3.connect("school_chatbot.db")
